@@ -331,6 +331,10 @@ thread_foreach (thread_action_func *func, void *aux)
     }
 }
 
+void thread_set_wakeup (uint64_t new_wakeup) {
+  thread_current()->wakeup_ticks = new_wakeup;
+}
+
 /** Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) 
