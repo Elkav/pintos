@@ -94,6 +94,12 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /**< List element. */
 
+    // used for priority donation
+    int base_priority;
+    struct list donor_list;
+    struct list_elem donor_elem;
+    struct lock *waiting_on_lock;
+
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /**< Page directory. */
@@ -128,6 +134,8 @@ void thread_exit (void) NO_RETURN;
 void thread_yield (void);
 
 bool has_higher_priority(const struct list_elem *elem1, const struct list_elem *elem2);
+bool has_higher_donor_priority(const struct list_elem *elem1, const struct list_elem *elem2);
+void thread_donate_priority(const struct thread *t);
 
 /** Performs some operation on thread t, given auxiliary data AUX. */
 typedef void thread_action_func (struct thread *t, void *aux);
