@@ -34,6 +34,14 @@ static void real_time_delay (int64_t num, int32_t denom);
 // Create a sleep list - a list of sleeping threads (threads with wakeup times that have not yet been reached)
 static struct list sleep_list;
 
+// To ensure the sleep list remains ordered, sort from smallest wakeup to largest wakeup.
+bool thread_has_smaller_wakeup(const struct list_elem *elem1, const struct list_elem *elem2, void *aux UNUSED){
+  struct thread *thread1 = list_entry(elem1, struct thread, elem);
+  struct thread *thread2 = list_entry(elem2, struct thread, elem);
+
+  return thread1->wakeup_ticks < thread2->wakeup_ticks;
+}
+
 /** Sets up the timer to interrupt TIMER_FREQ times per second,
    and registers the corresponding interrupt. */
 void
@@ -102,7 +110,7 @@ timer_sleep (int64_t ticks)
 
   thread_set_wakeup(wakeup);
   struct thread *curr = thread_current();
-  list_push_back(&sleep_list, &curr->elem);
+  list_insert_ordered(&sleep_list, &curr->elem, thread_has_smaller_wakeup, NULL);
 
   /** Instead of a busy-wait loop, use a blocking mechanism.
   This pulls the thread from the scheduler's pool immediately and ensures
@@ -203,9 +211,10 @@ static void timer_interrupt (struct intr_frame *args UNUSED) {
       if (t->wakeup_ticks <= ticks) {
         list_remove(e);
         thread_unblock(t);
+        e = next;
+      } else {
+        break; // since the sleep_list is ordered, once we reach a thread that should not be woken up, we can stop here.
       }
-
-      e = next;
     }
   }
 }
