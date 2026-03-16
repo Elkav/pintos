@@ -110,7 +110,7 @@ void
 sema_up (struct semaphore *sema) 
 {
   enum intr_level old_level;
-  struct thread *unblocked = NULL;  // Will hold the unblocked threadfrom the 
+  struct thread *unblocked = NULL;
 
   ASSERT (sema != NULL);
 
