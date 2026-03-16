@@ -87,7 +87,7 @@ struct thread
     enum thread_status status;          /**< Thread state. */
     char name[16];                      /**< Name (for debugging purposes). */
     uint8_t *stack;                     /**< Saved stack pointer. */
-    int priority;                       /**< Priority. */
+    int priority;                       /**< Effective priority (maximum of base_priority and donated priorities). */
     struct list_elem allelem;           /**< List element for all threads list. */
     uint64_t wakeup_ticks;
 
@@ -95,10 +95,10 @@ struct thread
     struct list_elem elem;              /**< List element. */
 
     // used for priority donation
-    int base_priority;
-    struct list donor_list;
-    struct list_elem donor_elem;
-    struct lock *waiting_on_lock;
+    int base_priority;                 // The original priority of the thread (unchanged by donors)
+    struct list donor_list;            // This thread's list of donors
+    struct list_elem donor_elem;       // List element fo the donor list
+    struct lock *waiting_on_lock;      // The lock this thread is waiting on
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -133,14 +133,18 @@ const char *thread_name (void);
 void thread_exit (void) NO_RETURN;
 void thread_yield (void);
 
-bool has_higher_priority(const struct list_elem *elem1, const struct list_elem *elem2);
-bool has_higher_donor_priority(const struct list_elem *elem1, const struct list_elem *elem2);
-void thread_donate_priority(const struct thread *t);
+// Comparison functions for thread priority, used when inserting/sorting lists of threads
+bool has_higher_priority(const struct list_elem *elem1, const struct list_elem *elem2, void *aux);       // For comparisons inside of the ready_list
+bool has_higher_donor_priority(const struct list_elem *elem1, const struct list_elem *elem2, void *aux); // For comparisons inside of the donor_list
+
+// Donate the blocked thread's priority to their waiting lock's holders, propagated to a depth of 8
+void thread_donate_priority(struct thread *t);
 
 /** Performs some operation on thread t, given auxiliary data AUX. */
 typedef void thread_action_func (struct thread *t, void *aux);
 void thread_foreach (thread_action_func *, void *);
 
+// sets the wakeup time to the specified uint64_t
 void thread_set_wakeup(uint64_t);
 
 int thread_get_priority (void);

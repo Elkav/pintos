@@ -31,7 +31,7 @@ static void real_time_sleep (int64_t num, int32_t denom);
 static void real_time_delay (int64_t num, int32_t denom);
 
 
-// Sleep queue
+// Create a sleep list - a list of sleeping threads (threads with wakeup times that have not yet been reached)
 static struct list sleep_list;
 
 /** Sets up the timer to interrupt TIMER_FREQ times per second,
@@ -41,7 +41,7 @@ timer_init (void)
 {
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
-  list_init(&sleep_list);
+  list_init(&sleep_list); // Initialize the sleep_list
 }
 
 /** Calibrates loops_per_tick, used to implement brief delays. */
@@ -89,23 +89,26 @@ timer_elapsed (int64_t then)
   return timer_ticks () - then;
 }
 
-/** Sleeps for approximately TICKS timer ticks.  Interrupts must
-   be turned on. */
 void
 timer_sleep (int64_t ticks) 
 {
   if (ticks <= 0) return;
 
-  int64_t wakeup = timer_ticks() + ticks;
-
   ASSERT (intr_get_level() == INTR_ON);
+
+  int64_t wakeup = timer_ticks() + ticks;
 
   enum intr_level old_level = intr_disable();
 
   thread_set_wakeup(wakeup);
   struct thread *curr = thread_current();
-  list_push_back(&sleep_list, &curr->elem); // or use list_insert_ordered?
-  thread_block(); // sleep
+  list_push_back(&sleep_list, &curr->elem);
+
+  /** Instead of a busy-wait loop, use a blocking mechanism.
+  This pulls the thread from the scheduler's pool immediately and ensures
+  it doesn't waste CPU cycles when waiting */
+
+  thread_block();
 
   intr_set_level(old_level);
 }
@@ -189,18 +192,22 @@ static void timer_interrupt (struct intr_frame *args UNUSED) {
 
   ASSERT (intr_get_level() == INTR_OFF);
 
-  for (e = list_begin(&sleep_list); e != list_end(&sleep_list);) {
-    struct thread *t = list_entry(e, struct thread, elem);
-    struct list_elem *next = list_next(e);
-    
-    if (t->wakeup_ticks <= ticks) {
-      list_remove(e);
-      thread_unblock(t);
+  if (!list_empty(&sleep_list)) { // If our sleep list has members...
+
+    // Iterate through every sleeping thread
+    for (e = list_begin(&sleep_list); e != list_end(&sleep_list);) {
+      struct thread *t = list_entry(e, struct thread, elem);
+      struct list_elem *next = list_next(e);
+      
+      // If it is past the thread's wakeup time (in ticks), remove from the list and unblock the thread
+      if (t->wakeup_ticks <= ticks) {
+        list_remove(e);
+        thread_unblock(t);
+      }
+
+      e = next;
     }
-
-    e = next;
   }
-
 }
 
 /** Returns true if LOOPS iterations waits for more than one timer
