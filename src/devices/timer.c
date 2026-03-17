@@ -110,7 +110,7 @@ timer_sleep (int64_t ticks)
 
   thread_set_wakeup(wakeup);
   struct thread *curr = thread_current();
-  list_insert_ordered(&sleep_list, &curr->elem, thread_has_smaller_wakeup, NULL);
+  list_insert_ordered(&sleep_list, &curr->elem, thread_has_smaller_wakeup, NULL); // order sleep_list from smallest to largest wakeup
 
   /** Instead of a busy-wait loop, use a blocking mechanism.
   This pulls the thread from the scheduler's pool immediately and ensures

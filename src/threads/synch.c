@@ -402,16 +402,15 @@ cond_signal (struct condition *cond, struct lock *lock UNUSED)
   ASSERT (!intr_context ());
   ASSERT (lock_held_by_current_thread (lock));
 
+  // Ensure we perform these actions (e.g. sorting the list) when interrupts are disabled, since that is a dangerous operation to do with interrupts
+  enum intr_level old_level = intr_disable();
+
   // If there are waiters, sort by priority then sema_up the front of the list (the highest priority)
   if (!list_empty (&cond->waiters)) {
-
-    // Ensure we sort the list when interrupts are disabled, since that is a dangerous operation to do
-    enum intr_level old_level = intr_disable();
     list_sort(&cond->waiters, sema_has_higher_priority, NULL);
-    intr_set_level(old_level);
-
     sema_up (&list_entry (list_pop_front (&cond->waiters), struct semaphore_elem, elem)->semaphore);
   }
+  intr_set_level(old_level);
 }
 
 /** Wakes up all threads, if any, waiting on COND (protected by

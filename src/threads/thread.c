@@ -399,6 +399,8 @@ void thread_set_priority (int new_priority) {
   priority does not drop below the highest priority donated to it by 
   threads waiting on locks it holds. */
 
+  enum intr_level old_level = intr_disable();
+
   if (!list_empty(&curr->donor_list)) {
     struct thread *highest_donor = list_entry(list_front(&curr->donor_list), struct thread, donor_elem);
 
@@ -413,6 +415,7 @@ void thread_set_priority (int new_priority) {
   if (thread_get_priority() < front_thread->priority) {
     thread_yield();
   }
+  intr_set_level (old_level);
 }
 
 /** Returns the current thread's priority.
