@@ -18,6 +18,8 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
+#define MAX_ARGS 128
+
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 
@@ -25,21 +27,31 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
-tid_t
-process_execute (const char *file_name) 
+
+
+tid_t process_execute (const char *file_name) 
 {
   char *fn_copy;
+  char *fn_name_copy; // Need to make a copy just for the name, since strtok_r modifies fn_copy
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
-  if (fn_copy == NULL)
+  fn_name_copy = palloc_get_page(0);
+  if (fn_copy == NULL || fn_name_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
+  strlcpy (fn_name_copy, file_name, PGSIZE);
 
-  /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  // Extract just the thread name 
+  char *save_ptr;
+  char *thread_name = strtok_r (fn_name_copy, " ", &save_ptr);
+
+  /* Create a new thread to execute the thread_name. */
+  tid = thread_create (thread_name, PRI_DEFAULT, start_process, fn_copy);
+
+  palloc_free_page (fn_name_copy); // we can immediately free fn_name_copy
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
   return tid;
@@ -47,24 +59,83 @@ process_execute (const char *file_name)
 
 /** A thread function that loads a user process and starts it
    running. */
-static void
-start_process (void *file_name_)
-{
+static void start_process (void *file_name_)
+{ 
   char *file_name = file_name_;
   struct intr_frame if_;
   bool success;
+
+  char *argv[MAX_ARGS];
+  int argc = 0;
+  char *save_ptr;
+
+  // Get the first token
+  char *token = strtok_r(file_name, " ", &save_ptr);
+
+  // Get the rest of the tokens (stop before we hit MAX_ARGS)
+  while(token != NULL && argc < MAX_ARGS - 1) {
+    argv[argc++] = token;
+    token = strtok_r(NULL, " ", &save_ptr);
+  }
+  argv[argc] = NULL;
+
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
 
-  /* If load failed, quit. */
-  palloc_free_page (file_name);
-  if (!success) 
+  // Load using argv[0] (the program name)
+  success = load (argv[0], &if_.eip, &if_.esp);
+
+
+  if (!success) {
+    /* If load failed, quit. */
+    palloc_free_page (file_name); // Free file_name before quitting!
     thread_exit ();
+  }
+
+  // If the load succeeded, we build the user stack
+  char *user_arg_addresses[MAX_ARGS];
+
+  // Push argument strings onto the stack (including \0)
+  for (int i = argc - 1; i >= 0; i--) {
+    size_t arg_len = strlen(argv[i]) + 1; // +1 ensures we include the null terminator
+    if_.esp = (char *) if_.esp - arg_len;
+    memcpy (if_.esp, argv[i], arg_len);
+    user_arg_addresses[i] = (char *) if_.esp;
+  }
+
+  // Apply padding for alignment before pushing pointers 
+  // & ~3 rounds down to nearest multiple of 4
+  if_.esp = (void *) ((uint32_t) if_.esp & ~3);
+
+  //push argv[argc] = NULL
+  if_.esp = (char *) if_.esp - sizeof (char *);
+  memset (if_.esp, 0, sizeof (char *));
+
+  //push argv[i] pointers from right to left
+  for (int i = argc - 1; i >= 0; i--){
+    if_.esp = (char *) if_.esp - sizeof (char *);
+    memcpy (if_.esp, &user_arg_addresses[i], sizeof (char *));
+  }
+
+  //Push argv (address of argv[0])
+  char *argv_address = (char *) if_.esp;
+  if_.esp = (char *) if_.esp - sizeof (char **);
+  memcpy (if_.esp, &argv_address, sizeof (char **));
+
+  //Push argc
+  if_.esp = (char *) if_.esp - sizeof (int);
+  memcpy (if_.esp, &argc, sizeof (int));
+
+  //Push fake return address
+  if_.esp = (char *) if_.esp - sizeof (void *);
+  memset (if_.esp, 0, sizeof (void *));
+
+  // Since we're done copying file_name we can finally free it
+  palloc_free_page (file_name);
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -85,15 +156,23 @@ start_process (void *file_name_)
 
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
-int
-process_wait (tid_t child_tid UNUSED) 
-{
-  return -1;
+int process_wait (tid_t child_tid UNUSED) {
+  // Find the child thread
+  struct thread *child = thread_get_by_tid(child_tid);
+  
+  // if the child doesn't exist return -1
+  if (child == NULL) return -1;
+
+  // Block the parent until the child calls sema_up
+  sema_down(&child->proc_wait_sema);
+
+  // Get the exit status and return it
+  int status = child->exit_status;
+  return status;
 }
 
 /** Free the current process's resources. */
-void
-process_exit (void)
+void process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
@@ -103,6 +182,11 @@ process_exit (void)
   pd = cur->pagedir;
   if (pd != NULL) 
     {
+
+      // Print the process termination message
+      // We can ensure kernel threads don't trigger it by wrapping it in (pd != NULL)
+      printf ("%s: exit(%d)\n", cur->name, cur->exit_status);
+
       /* Correct ordering here is crucial.  We must set
          cur->pagedir to NULL before switching page directories,
          so that a timer interrupt can't switch back to the
@@ -114,6 +198,8 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+  // Wake up any parent thread waiting on us
+  sema_up(&cur->proc_wait_sema);
 }
 
 /** Sets up the CPU for running user code in the current

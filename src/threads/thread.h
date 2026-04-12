@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "threads/synch.h"
 
 /** States in a thread's life cycle. */
 enum thread_status
@@ -100,6 +101,10 @@ struct thread
     struct list_elem donor_elem;       // List element fo the donor list
     struct lock *waiting_on_lock;      // The lock this thread is waiting on
 
+    int exit_status;                   // The exit status of this thread (initialized to -1)
+
+    struct semaphore proc_wait_sema;   // Used to add a proper wait to process_wait
+
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /**< Page directory. */
@@ -128,6 +133,7 @@ void thread_unblock (struct thread *);
 
 struct thread *thread_current (void);
 tid_t thread_tid (void);
+struct thread *thread_get_by_tid(tid_t tid);
 const char *thread_name (void);
 
 void thread_exit (void) NO_RETURN;
